@@ -1,0 +1,53 @@
+name: bench-crc32fast
+
+on:
+  push:
+    branches: [bench-crc32fast]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04-arm, macos-15, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - uses: actions/checkout@v4
+      with:
+        repository: milesgranger/cramjam
+        ref: ee4dfc854078224e51216bb77bfc04f452448120
+        path: base
+        persist-credentials: false
+    - uses: actions/checkout@v4
+      with:
+        repository: ptweezy/cramjam
+        ref: bump-crc32fast
+        path: pr
+        persist-credentials: false
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.14"
+    - name: Build both wheels
+      run: |
+        rustc --version
+        python -m pip install -q maturin
+        for d in base pr; do
+          grep -A1 '^name = "crc32fast"' $d/Cargo.lock
+          (cd $d && maturin build --release --locked --out ../dist-$d -i python)
+          python -m venv venv-$d
+          venv-$d/bin/pip install -q dist-$d/*.whl
+        done
+    - name: Benchmark gzip
+      run: python bench/bench_gzip.py venv-base/bin/python venv-pr/bin/python
+    - name: Run the test suite on the PR build
+      run: |
+        venv-pr/bin/pip install -q numpy "pytest>=9.0.3" pytest-xdist pytest-benchmark "hypothesis>=6.165.10"
+        cd pr && ../venv-pr/bin/python -m pytest tests -q --benchmark-skip -n0 --dist no
